@@ -30,7 +30,7 @@
 
 // == global defines =============================================
 
-static const char* TAG = "DHT";
+static const char* TAG = "DHT22";
 
 int DHTgpio = 4;				// my default DHT pin = 4
 float humidity = 0.;
