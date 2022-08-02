@@ -2,6 +2,7 @@
 
 #include "freertos/event_groups.h"
 
+namespace CoReef {
 class crWifi {
 
     public:
@@ -11,3 +12,5 @@ class crWifi {
     protected:
     private:
 };
+
+}

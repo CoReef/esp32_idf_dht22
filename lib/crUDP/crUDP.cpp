@@ -22,20 +22,34 @@
 
 #include "crUDP.h"
 
+namespace CoReef {
+
 #define MULTICAST_TTL 1
 #define LISTEN_ALL_IF true
 
 static const char *MTAG = "crUDP";
 
-crUDP::crUDP () {
-    ESP_ERROR_CHECK(esp_netif_init());
+MulticastSocket::MulticastSocket (char *multicast_addr, int multicast_port) {
+    sock = create_multicast_ipv4_socket(multicast_addr,multicast_port);
+    if (sock == -1) return;
+    bool success = add_socket_to_multicast_group(sock,multicast_addr,true);
+    if (!success) {
+        close(sock);
+        sock = -1;
+    }
 }
 
-crUDP::~crUDP () {
-
+MulticastSocket::~MulticastSocket () {
+    if (sock == -1) return;
+    // Leave multicast group
+    close(sock);
 }
 
-bool crUDP::add_socket_to_multicast_group (int sock, char *multicast_addr, bool assign_source_if) {
+bool MulticastSocket::valid () {
+    return sock != -1;
+}
+
+bool MulticastSocket::add_socket_to_multicast_group (int sock, char *multicast_addr, bool assign_source_if) {
     struct ip_mreq imreq = { 0 };
     struct in_addr iaddr = { 0 };
     int err = 0;
@@ -69,7 +83,7 @@ bool crUDP::add_socket_to_multicast_group (int sock, char *multicast_addr, bool 
     return true;
 }
 
-int crUDP::create_multicast_ipv4_socket (char *multicast_addr, int multicast_port ) {
+int MulticastSocket::create_multicast_ipv4_socket (char *multicast_addr, int multicast_port ) {
     struct sockaddr_in saddr = { 0 };
     int sock = -1;
     int err = 0;
@@ -96,14 +110,6 @@ int crUDP::create_multicast_ipv4_socket (char *multicast_addr, int multicast_por
     setsockopt(sock, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(uint8_t));
     if (err < 0) {
         ESP_LOGE(MTAG, "Failed to set IP_MULTICAST_TTL. Error %d", errno);
-        close(sock);
-        return -1;
-    }
-
-    // this is also a listening socket, so add it to the multicast
-    // group for listening...
-    bool success = add_socket_to_multicast_group(sock,multicast_addr,true);
-    if (!success) {
         close(sock);
         return -1;
     }
@@ -145,4 +151,4 @@ int crUDP::create_multicast_ipv4_socket (char *multicast_addr, int multicast_por
         }
 */
 
-
+}

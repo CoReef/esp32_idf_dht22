@@ -39,6 +39,8 @@ static const char *TAG = "esp32_dht22";
 #include "crWifi.h"
 #include "crUDP.h"
 
+using namespace CoReef;
+
 #include "../../keys/ssid.h"
 #include "../../keys/coreef_addresses.h"
 
@@ -66,9 +68,8 @@ void app_main()
     ESP_ERROR_CHECK(ret);
 
     crWifi wifi(const_cast<char *>(WIFI_SSID),const_cast<char *>(WIFI_PASSWD));
-    crUDP udp;
-    int sock = udp.create_multicast_ipv4_socket(const_cast<char *>(COREEF_IPV4_MULTICAST_ADDR),COREEF_IPV4_MULTICAST_PORT);
-    if (sock < 0) {
+    MulticastSocket ms(const_cast<char *>(COREEF_IPV4_MULTICAST_ADDR),COREEF_IPV4_MULTICAST_PORT);
+    if (!ms.valid()) {
         ESP_LOGE(TAG, "Failed to create IPv4 multicast socket");
         return;
     }

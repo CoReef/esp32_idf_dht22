@@ -17,6 +17,8 @@
 
 #include "crWifi.h"
 
+namespace CoReef {
+
 #define EXAMPLE_ESP_MAXIMUM_RETRY  5
 
 #define CONFIG_ESP_WIFI_AUTH_OPEN CONFIG_ESP_WIFI_AUTH_WPA_PSK
@@ -94,5 +96,11 @@ crWifi::crWifi ( char *ssid, char *passwd ) {
     } else {
         ESP_LOGE(TAG, "Unexpected event");
     }
+
+    ESP_ERROR_CHECK(esp_netif_init());
+}
+
+crWifi::~crWifi () {
+}
 
 }
