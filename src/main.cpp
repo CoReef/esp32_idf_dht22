@@ -12,29 +12,15 @@
     https://github.com/espressif/esp-idf/blob/master/examples/protocols/sockets/udp_multicast/main/udp_multicast_example_main.c
 */
 
-#include <stdio.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/event_groups.h"
-#include "esp_system.h"
-#include "esp32/rom/ets_sys.h"
-#include "nvs_flash.h"
-#include "driver/gpio.h"
-#include "sdkconfig.h"
-#include "esp_system.h"
-#include "esp_wifi.h"
-#include "esp_event.h"
-#include "esp_netif.h"
 
 #define LOG_LOCAL_LEVEL ESP_LOG_INFO
 #include "esp_log.h"
 
-static const char *TAG = "esp32_dht22";
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "nvs_flash.h"
 
-#include "lwip/err.h"
-#include "lwip/sockets.h"
-#include "lwip/sys.h"
-#include <lwip/netdb.h>
+static const char *TAG = "esp32_dht22";
 
 #include "crWifi.h"
 #include "crUDP.h"
@@ -67,7 +53,13 @@ void app_main()
     }
     ESP_ERROR_CHECK(ret);
 
-    crWifi wifi(const_cast<char *>(WIFI_SSID),const_cast<char *>(WIFI_PASSWD));
+    crWifi wifi;
+    bool connected = false;
+    while (!connected) {
+        ESP_LOGI(TAG, "Connecting to SSID <%s>",const_cast<char *>(WIFI_SSID));  
+        connected = wifi.connect(const_cast<char *>(WIFI_SSID),const_cast<char *>(WIFI_PASSWD));
+    }
+
     MulticastSocket ms(const_cast<char *>(COREEF_IPV4_MULTICAST_ADDR),COREEF_IPV4_MULTICAST_PORT);
     if (!ms.valid()) {
         ESP_LOGE(TAG, "Failed to create IPv4 multicast socket");
@@ -87,16 +79,16 @@ void app_main()
 		
         const char sendfmt[] = "{ \"temperature\" : %.1f, \"humidity\" : %.1f }";
         char sendbuf[48];
-        char addrbuf[32] = { 0 };
         int len = snprintf(sendbuf, sizeof(sendbuf), sendfmt, getTemperature(), getHumidity());
         if (len > sizeof(sendbuf)) {
             ESP_LOGE(TAG, "Overflowed multicast sendfmt buffer!!");
             break;
         }
+        ms.send(sendbuf,len);
 
 		// -- wait at least 2 sec before reading again ------------
 		// The interval of whole process must be beyond 2 seconds !! 
-		vTaskDelay( 60000 / portTICK_RATE_MS );
+		vTaskDelay( 5000 / portTICK_RATE_MS );
 	}
 
 	// xTaskCreate( &DHT_task, "DHT_task", 2048, NULL, 5, NULL );

@@ -14,14 +14,15 @@
 #include "esp_event.h"
 #include "string.h"
 //#include "esp_netif.h"
+#include "freertos/event_groups.h"
 
 #include "crWifi.h"
 
 namespace CoReef {
 
-#define EXAMPLE_ESP_MAXIMUM_RETRY  5
+#define EXAMPLE_ESP_MAXIMUM_RETRY  10
 
-#define CONFIG_ESP_WIFI_AUTH_OPEN CONFIG_ESP_WIFI_AUTH_WPA_PSK
+//#define CONFIG_ESP_WIFI_AUTH_OPEN CONFIG_ESP_WIFI_AUTH_WPA_PSK
 #define ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD WIFI_AUTH_WPA_PSK
 
 /* The event group allows multiple bits for each event, but we only care about two events:
@@ -33,21 +34,25 @@ namespace CoReef {
 static const char *TAG = "crWifi";
 static EventGroupHandle_t s_wifi_event_group;
 static int s_retry_num = 0;
+static bool active_connection = false;
 
 static void event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
 {
+    ESP_LOGI(TAG,"event_handler with event_base <%s>, id <%d>",event_base, event_id);
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        active_connection = false;
         if (s_retry_num < EXAMPLE_ESP_MAXIMUM_RETRY) {
             esp_wifi_connect();
             s_retry_num++;
             ESP_LOGI(TAG, "retry to connect to the AP");
         } else {
             xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+            ESP_LOGI(TAG,"connect to the AP fail");
         }
-        ESP_LOGI(TAG,"connect to the AP fail");
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        active_connection = true;
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_num = 0;
@@ -55,7 +60,10 @@ static void event_handler(void* arg, esp_event_base_t event_base, int32_t event_
     }
 }
 
-crWifi::crWifi ( char *ssid, char *passwd ) {
+crWifi::crWifi () {
+}
+
+bool crWifi::connect ( char *ssid, char *passwd ) {
     s_wifi_event_group = xEventGroupCreate();
 
     ESP_ERROR_CHECK(esp_netif_init());
@@ -90,17 +98,23 @@ crWifi::crWifi ( char *ssid, char *passwd ) {
 
     /* xEventGroupWaitBits() returns the bits before the call returned, hence we can test which event actually happened. */
     if (bits & WIFI_CONNECTED_BIT) {
-        ESP_LOGI(TAG, "connected to ap SSID:%s password:%s",ssid,passwd);
+        ESP_LOGI(TAG, "connected to ap SSID <%s> password <%s>",ssid,passwd);
     } else if (bits & WIFI_FAIL_BIT) {
-        ESP_LOGI(TAG, "Failed to connect to SSID:%s, password:%s",ssid,passwd);
+        ESP_LOGI(TAG, "Failed to connect to SSID <%s>, password <%s>",ssid,passwd);
     } else {
         ESP_LOGE(TAG, "Unexpected event");
     }
 
     ESP_ERROR_CHECK(esp_netif_init());
+    return connected();
+}
+
+bool crWifi::connected () {
+    return active_connection;
 }
 
 crWifi::~crWifi () {
+    esp_wifi_disconnect();
 }
 
 }

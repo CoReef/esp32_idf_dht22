@@ -1,14 +1,15 @@
-//#pragma once
-
-#include "freertos/event_groups.h"
+#pragma once
 
 namespace CoReef {
 class crWifi {
 
     public:
-        crWifi ( char *ssid, char *passwd );
+        crWifi ();
         ~crWifi ();
 
+        bool connect ( char *ssid, char *passwd );
+
+        bool connected ();
     protected:
     private:
 };

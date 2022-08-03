@@ -10,15 +10,15 @@
 //#include "sdkconfig.h"
 //#include "esp_wifi.h"
 //#include "esp_event.h"
-#include "esp_netif.h"
+//#include "esp_netif.h"
 
 #define LOG_LOCAL_LEVEL ESP_LOG_INFO
 #include "esp_log.h"
-//
+
 //#include "lwip/err.h"
 #include "lwip/sockets.h"
 //#include "lwip/sys.h"
-//#include <lwip/netdb.h>
+#include <lwip/netdb.h>
 
 #include "crUDP.h"
 
@@ -37,11 +37,17 @@ MulticastSocket::MulticastSocket (char *multicast_addr, int multicast_port) {
         close(sock);
         sock = -1;
     }
+    success = create_multicast_ipv4_destination_address(multicast_addr,multicast_port);
+    if (!success) {
+        close(sock);
+        sock = -1;
+    }
 }
 
 MulticastSocket::~MulticastSocket () {
     if (sock == -1) return;
-    // Leave multicast group
+    // TODO: Leave multicast group
+    freeaddrinfo(multicast_destination_address);
     close(sock);
 }
 
@@ -49,7 +55,7 @@ bool MulticastSocket::valid () {
     return sock != -1;
 }
 
-bool MulticastSocket::add_socket_to_multicast_group (int sock, char *multicast_addr, bool assign_source_if) {
+bool MulticastSocket::add_socket_to_multicast_group (int s, char *multicast_addr, bool assign_source_if) {
     struct ip_mreq imreq = { 0 };
     struct in_addr iaddr = { 0 };
     int err = 0;
@@ -68,14 +74,14 @@ bool MulticastSocket::add_socket_to_multicast_group (int sock, char *multicast_a
     if (assign_source_if) {
         // Assign the IPv4 multicast source interface, via its IP
         // (only necessary if this socket is IPV4 only)
-        err = setsockopt(sock,IPPROTO_IP,IP_MULTICAST_IF, &iaddr,sizeof(struct in_addr));
+        err = setsockopt(s,IPPROTO_IP,IP_MULTICAST_IF, &iaddr,sizeof(struct in_addr));
         if (err < 0) {
             ESP_LOGE(MTAG, "Failed to set IP_MULTICAST_IF. Error %d", errno);
             return false;
         }
     }
 
-    err = setsockopt(sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, &imreq, sizeof(struct ip_mreq));
+    err = setsockopt(s, IPPROTO_IP, IP_ADD_MEMBERSHIP, &imreq, sizeof(struct ip_mreq));
     if (err < 0) {
         ESP_LOGE(MTAG, "Failed to set IP_ADD_MEMBERSHIP. Error %d", errno);
         return false;
@@ -83,13 +89,13 @@ bool MulticastSocket::add_socket_to_multicast_group (int sock, char *multicast_a
     return true;
 }
 
-int MulticastSocket::create_multicast_ipv4_socket (char *multicast_addr, int multicast_port ) {
+int MulticastSocket::create_multicast_ipv4_socket (char *multicast_addr, int multicast_port) {
     struct sockaddr_in saddr = { 0 };
-    int sock = -1;
+    int s = -1;
     int err = 0;
 
-    sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_IP);
-    if (sock < 0) {
+    s = socket(PF_INET, SOCK_DGRAM, IPPROTO_IP);
+    if (s < 0) {
         ESP_LOGE(MTAG, "Failed to create socket. Error %d", errno);
         return -1;
     }
@@ -98,57 +104,62 @@ int MulticastSocket::create_multicast_ipv4_socket (char *multicast_addr, int mul
     saddr.sin_family = PF_INET;
     saddr.sin_port = htons(multicast_port);
     saddr.sin_addr.s_addr = htonl(INADDR_ANY);
-    err = bind(sock, (struct sockaddr *)&saddr, sizeof(struct sockaddr_in));
+    err = bind(s, (struct sockaddr *)&saddr, sizeof(struct sockaddr_in));
     if (err < 0) {
         ESP_LOGE(MTAG, "Failed to bind socket. Error %d", errno);
-        close(sock);
+        close(s);
         return -1;
     }
     
     // Assign multicast TTL (set separately from normal interface TTL)
     uint8_t ttl = MULTICAST_TTL;
-    setsockopt(sock, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(uint8_t));
+    setsockopt(s, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(uint8_t));
     if (err < 0) {
         ESP_LOGE(MTAG, "Failed to set IP_MULTICAST_TTL. Error %d", errno);
-        close(sock);
+        close(s);
         return -1;
     }
-    return sock;
+    return s;
 }
 
-/*
-    // set destination multicast addresses for sending from these sockets
+bool MulticastSocket::create_multicast_ipv4_destination_address (char *multicast_addr, int multicast_port) {
     struct sockaddr_in sdestv4 = {
         .sin_family = PF_INET,
-        .sin_port = htons(UDP_PORT),
+        .sin_port = htons(multicast_port),
     };
-    inet_aton(MULTICAST_IPV4_ADDR, &sdestv4.sin_addr.s_addr);
+    inet_aton(multicast_addr, &sdestv4.sin_addr.s_addr);
 
-        struct addrinfo hints = {
-            .ai_flags = AI_PASSIVE,
-            .ai_family = AF_INET,
-            .ai_socktype = SOCK_DGRAM,
-        };
-        struct addrinfo *res;
+    struct addrinfo hints = {
+        .ai_flags = AI_PASSIVE,
+        .ai_family = AF_INET,
+        .ai_socktype = SOCK_DGRAM,
+    };
+    int err = getaddrinfo(multicast_addr,NULL,&hints,&multicast_destination_address);
+    if (err < 0) {
+        ESP_LOGE(MTAG, "getaddrinfo() failed for IPV4 destination address. error: %d", err);
+        return false;
+        }
+    if (multicast_destination_address == 0) {
+        ESP_LOGE(MTAG, "getaddrinfo() did not return any addresses");
+        return false;
+        }
+    ((struct sockaddr_in *)multicast_destination_address->ai_addr)->sin_port = htons(multicast_port);
+    // char destination_address[32] = { 0 };
+    // inet_ntoa_r(((struct sockaddr_in *)res->ai_addr)->sin_addr, destination_address, sizeof(destination_address)-1);
+    // ESP_LOGI(MTAG, "Sending to IPV4 multicast address %s:%d...",  destination_address, multicast_port);
+    return true;
+}
 
-        int err = getaddrinfo(MULTICAST_IPV4_ADDR, NULL,&hints,&res);
-        if (err < 0) {
-            ESP_LOGE(MTAG, "getaddrinfo() failed for IPV4 destination address. error: %d", err);
-            break;
+bool MulticastSocket::send (char *message, int message_len ) {
+    if (!valid()) {
+        ESP_LOGE(MTAG, "Multicast socket not initialized correctly; unable to send");
+        return false;
+    }
+    int err = sendto(sock, message, message_len, 0, multicast_destination_address->ai_addr, multicast_destination_address->ai_addrlen);
+    if (err < 0) {
+        ESP_LOGE(MTAG, "IPV4 sendto failed. errno: %d", errno);
+        return false;
         }
-        if (res == 0) {
-            ESP_LOGE(MTAG, "getaddrinfo() did not return any addresses");
-            break;
-        }
-        ((struct sockaddr_in *)res->ai_addr)->sin_port = htons(UDP_PORT);
-        inet_ntoa_r(((struct sockaddr_in *)res->ai_addr)->sin_addr, addrbuf, sizeof(addrbuf)-1);
-        ESP_LOGI(MTAG, "Sending to IPV4 multicast address %s:%d...",  addrbuf, UDP_PORT);
-        err = sendto(sock, sendbuf, len, 0, res->ai_addr, res->ai_addrlen);
-        freeaddrinfo(res);
-        if (err < 0) {
-            ESP_LOGE(MTAG, "IPV4 sendto failed. errno: %d", errno);
-            break;
-        }
-*/
-
+    return true;
+    }
 }
