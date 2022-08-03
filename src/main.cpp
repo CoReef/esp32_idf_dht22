@@ -5,8 +5,10 @@
 	Using DHT22 code implemented by Ricardo Timmermann
     (https://github.com/gosouth/DHT22)
 
-    Wifi code is based on the example at Github provided by espressif
+    Wifi code started with an example found at Github and provided by espressif
     (https://github.com/espressif/esp-idf/blob/master/examples/wifi/getting_started/station/main/station_example_main.c)
+    While trying to refactor it into a C++ class, the result did not connect to the AP. The class written by Henk Grobbelaar
+    (found at https://embeddedtutorials.com/eps32/esp32-wifi-cpp-esp-idf-station/) is now the working base for the program.
 
     UDP multicast code is based on the example at Github provided by espressif
     https://github.com/espressif/esp-idf/blob/master/examples/protocols/sockets/udp_multicast/main/udp_multicast_example_main.c
@@ -45,6 +47,8 @@ void DHT_task(void *pvParameter)
 
 void app_main()
 {
+    esp_event_loop_create_default();
+
     //Initialize NVS
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -53,12 +57,9 @@ void app_main()
     }
     ESP_ERROR_CHECK(ret);
 
-    crWifi wifi;
-    bool connected = false;
-    while (!connected) {
-        ESP_LOGI(TAG, "Connecting to SSID <%s>",const_cast<char *>(WIFI_SSID));  
-        connected = wifi.connect(const_cast<char *>(WIFI_SSID),const_cast<char *>(WIFI_PASSWD));
-    }
+    Wifi wifi;
+    wifi.SetCredentials(WIFI_SSID,WIFI_PASSWD);
+    wifi.Init();
 
     MulticastSocket ms(const_cast<char *>(COREEF_IPV4_MULTICAST_ADDR),COREEF_IPV4_MULTICAST_PORT);
     if (!ms.valid()) {
@@ -83,6 +84,25 @@ void app_main()
         if (len > sizeof(sendbuf)) {
             ESP_LOGE(TAG, "Overflowed multicast sendfmt buffer!!");
             break;
+        }
+        bool connected = false;
+        while (!connected) {
+            Wifi::state_e wifi_state = wifi.GetState();
+            switch (wifi_state) {
+                case Wifi::state_e::READY_TO_CONNECT:
+                case Wifi::state_e::DISCONNECTED:
+                    wifi.Begin();
+                    break;
+                case Wifi::state_e::CONNECTED:
+                    connected = true;
+                    break;
+                case Wifi::state_e::WAITING_FOR_IP:
+                case Wifi::state_e::CONNECTING:
+                    vTaskDelay( 100 / portTICK_RATE_MS );
+                    break;
+                default:
+                    ESP_LOGI(TAG,"Wifi state is %s - not yet dealing with it",Wifi::GetStateDescription(wifi_state));
+            }
         }
         ms.send(sendbuf,len);
 
