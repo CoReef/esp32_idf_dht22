@@ -15,17 +15,19 @@
 */
 
 #define DEVICE_NAME "Nemo-01"
-#define POLL_INTERVALL 60    // seconds
+#define POLL_INTERVALL 300    // seconds
 #define BACKLOG_SIZE 12
 #define MAX_MESSAGE_SIZE 1024
 
-#define LOG_LOCAL_LEVEL ESP_LOG_INFO
+#define LOG_LOCAL_LEVEL ESP_LOG_WARN
 #include "esp_log.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs_flash.h"
 #include "esp_timer.h"
+#include "esp_sleep.h"
+#include "esp32/rom/rtc.h"
 
 static const char *TAG = "esp32_dht22";
 
@@ -50,7 +52,8 @@ struct Samples {
     float backlog_h[BACKLOG_SIZE];
 };
 
-static Samples samples;
+RTC_NOINIT_ATTR Samples samples;
+RTC_NOINIT_ATTR bool samples_initialized = false;
 
 // ********************************************************************************
 // Main
@@ -61,19 +64,6 @@ void DHT_task(void *pvParameter)
 }
 
 void app_main() {
-    int64_t start_time = esp_timer_get_time();
-
-    for (int i=0; i<BACKLOG_SIZE; i++) {
-        samples.backlog_t[i] = -100.0;
-        samples.backlog_h[i] = -100.0;
-    }
-    samples.current_temperature = -100.0;
-    samples.current_humidity = -100.0;
-    samples.current = 0;
-    samples.seq_number = 0;
-
-    esp_event_loop_create_default();
-
     //Initialize NVS
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -81,6 +71,25 @@ void app_main() {
       ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+
+
+    int64_t start_time = esp_timer_get_time();
+
+    if (rtc_get_reset_reason(0) != DEEPSLEEP_RESET) {
+//    if (!samples_initialized) {
+        for (int i=0; i<BACKLOG_SIZE; i++) {
+            samples.backlog_t[i] = -100.0;
+            samples.backlog_h[i] = -100.0;
+        }
+        samples.current_temperature = -100.0;
+        samples.current_humidity = -100.0;
+        samples.current = 0;
+        samples.seq_number = 0;
+        samples_initialized = true;
+    }
+    ESP_LOGI(TAG, "data structure samples has <%d> bytes",sizeof(samples));
+
+    esp_event_loop_create_default();
 
     Wifi wifi;
     wifi.SetCredentials(WIFI_SSID,WIFI_PASSWD);
@@ -160,10 +169,16 @@ void app_main() {
         }
         printf("%s\n",message);
         ms.send(message,MAX_MESSAGE_SIZE-m_len_remain);
+        vTaskDelay( 1000 / portTICK_RATE_MS );
+        ms.send(message,MAX_MESSAGE_SIZE-m_len_remain);
 
 		// -- wait at least 2 sec before reading again ------------
 		// The interval of whole process must be beyond 2 seconds !! 
-		vTaskDelay( POLL_INTERVALL * 1000 / portTICK_RATE_MS );
+		// vTaskDelay( POLL_INTERVALL * 1000 / portTICK_RATE_MS );
+
+        uint64_t deep_sleep = (POLL_INTERVALL-1) * 1000000;
+        esp_sleep_enable_timer_wakeup(deep_sleep);
+        esp_deep_sleep_start();
 	}
 
 	// xTaskCreate( &DHT_task, "DHT_task", 2048, NULL, 5, NULL );
