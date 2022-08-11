@@ -45,15 +45,13 @@ extern "C" {
 }
 struct Samples {
     unsigned int seq_number;
-    int64_t current;
-    float current_temperature;
+    int64_t seconds_since_boot;
     float backlog_t[BACKLOG_SIZE];
-    float current_humidity;
     float backlog_h[BACKLOG_SIZE];
 };
 
 RTC_NOINIT_ATTR Samples samples;
-RTC_NOINIT_ATTR bool samples_initialized = false;
+RTC_NOINIT_ATTR int64_t start_time;
 
 // ********************************************************************************
 // Main
@@ -72,20 +70,17 @@ void app_main() {
     }
     ESP_ERROR_CHECK(ret);
 
-
-    int64_t start_time = esp_timer_get_time();
+    struct timeval tv_now;
 
     if (rtc_get_reset_reason(0) != DEEPSLEEP_RESET) {
-//    if (!samples_initialized) {
+    gettimeofday(&tv_now,NULL);
+    start_time = (int64_t) tv_now.tv_sec;
         for (int i=0; i<BACKLOG_SIZE; i++) {
             samples.backlog_t[i] = -100.0;
             samples.backlog_h[i] = -100.0;
         }
-        samples.current_temperature = -100.0;
-        samples.current_humidity = -100.0;
-        samples.current = 0;
+        samples.seconds_since_boot = 0;
         samples.seq_number = 0;
-        samples_initialized = true;
     }
     ESP_LOGI(TAG, "data structure samples has <%d> bytes",sizeof(samples));
 
@@ -109,22 +104,21 @@ void app_main() {
 		int ret = readDHT();		
 		errorHandler(ret);
 
-        samples.current = (esp_timer_get_time() - start_time) / 1000;
+        gettimeofday(&tv_now,NULL);
+        samples.seconds_since_boot = (int64_t) tv_now.tv_sec - start_time;
         for (int i=BACKLOG_SIZE-1;i>0; i--) {
             samples.backlog_t[i] = samples.backlog_t[i-1];
             samples.backlog_h[i] = samples.backlog_h[i-1];
         }
-        samples.backlog_t[0] = samples.current_temperature;
-        samples.backlog_h[0] = samples.current_humidity;
-        samples.current_temperature = getTemperature();
-        samples.current_humidity = getHumidity();
+        samples.backlog_t[0] = getTemperature();
+        samples.backlog_h[0] = getHumidity();
         samples.seq_number++;
 
         char *m_ptr = message;
         int m_len_remain = MAX_MESSAGE_SIZE;
         
-        const char fmt_head[] = " { \"device\":\"%s\", \"sequence\":%d, \"current\":%lld, \"current_t\":%.1f, \"current_h\":%.1f, \"backlog_t\":[";
-        int len = snprintf(m_ptr,m_len_remain,fmt_head,DEVICE_NAME,samples.seq_number,samples.current,samples.current_temperature,samples.current_humidity);
+        const char fmt_head[] = " { \"device\":\"%s\",\"sequence\":%d,\"sec_since_boot\":%lld,\"channels\":[\"temperature\",\"humidity\"],\"channel_0\":[";
+        int len = snprintf(m_ptr,m_len_remain,fmt_head,DEVICE_NAME,samples.seq_number,samples.seconds_since_boot);
         const char fmt_v[] = "%.1f,";
         for (int i=0;i<BACKLOG_SIZE;i++) {
             m_ptr += len;
@@ -133,7 +127,7 @@ void app_main() {
         }
         m_ptr += len-1;
         m_len_remain -= len-1;
-        const char fmt_m[] = "], \"backlog_h\":[";
+        const char fmt_m[] = "], \"channel_1\":[";
         len = snprintf(m_ptr,m_len_remain,fmt_m);
         for (int i=0;i<BACKLOG_SIZE;i++) {
             m_ptr += len;
