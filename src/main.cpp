@@ -15,7 +15,7 @@
 */
 
 #define DEVICE_NAME "Nemo-01"
-#define POLL_INTERVALL 300    // seconds
+#define POLL_INTERVALL 60    // seconds
 #define BACKLOG_SIZE 12
 #define MAX_MESSAGE_SIZE 1024
 
@@ -45,13 +45,13 @@ extern "C" {
 }
 struct Samples {
     unsigned int seq_number;
-    int64_t seconds_since_boot;
     float backlog_t[BACKLOG_SIZE];
     float backlog_h[BACKLOG_SIZE];
+    double t[BACKLOG_SIZE];
 };
 
 RTC_NOINIT_ATTR Samples samples;
-RTC_NOINIT_ATTR int64_t start_time;
+RTC_NOINIT_ATTR double deep_sleep_period_ms = ((double) POLL_INTERVALL) * 1000.0;
 
 // ********************************************************************************
 // Main
@@ -59,6 +59,12 @@ RTC_NOINIT_ATTR int64_t start_time;
 
 void DHT_task(void *pvParameter)
 {
+}
+
+double get_time_in_millis () {
+    struct timeval tv_now;
+    gettimeofday(&tv_now,NULL);        
+    return ((double) tv_now.tv_sec) * 1000.0 + ((double) tv_now.tv_usec) / 1000.0;
 }
 
 void app_main() {
@@ -70,17 +76,14 @@ void app_main() {
     }
     ESP_ERROR_CHECK(ret);
 
-    struct timeval tv_now;
-
     if (rtc_get_reset_reason(0) != DEEPSLEEP_RESET) {
-    gettimeofday(&tv_now,NULL);
-    start_time = (int64_t) tv_now.tv_sec;
         for (int i=0; i<BACKLOG_SIZE; i++) {
             samples.backlog_t[i] = -100.0;
             samples.backlog_h[i] = -100.0;
+            samples.t[i] = -1.0;
         }
-        samples.seconds_since_boot = 0;
         samples.seq_number = 0;
+        deep_sleep_period_ms = ((double) POLL_INTERVALL) * 1000.0;
     }
     ESP_LOGI(TAG, "data structure samples has <%d> bytes",sizeof(samples));
 
@@ -101,24 +104,24 @@ void app_main() {
 
     char message[MAX_MESSAGE_SIZE];
     while(1) {
-		int ret = readDHT();		
-		errorHandler(ret);
-
-        gettimeofday(&tv_now,NULL);
-        samples.seconds_since_boot = (int64_t) tv_now.tv_sec - start_time;
         for (int i=BACKLOG_SIZE-1;i>0; i--) {
             samples.backlog_t[i] = samples.backlog_t[i-1];
             samples.backlog_h[i] = samples.backlog_h[i-1];
+            samples.t[i] = samples.t[i-1];
         }
+		int ret = readDHT();		
+		errorHandler(ret);
         samples.backlog_t[0] = getTemperature();
         samples.backlog_h[0] = getHumidity();
+        samples.t[0] = get_time_in_millis();
+
         samples.seq_number++;
 
         char *m_ptr = message;
         int m_len_remain = MAX_MESSAGE_SIZE;
         
-        const char fmt_head[] = " { \"device\":\"%s\",\"sequence\":%d,\"sec_since_boot\":%lld,\"channels\":[\"temperature\",\"humidity\"],\"channel_0\":[";
-        int len = snprintf(m_ptr,m_len_remain,fmt_head,DEVICE_NAME,samples.seq_number,samples.seconds_since_boot);
+        const char fmt_head[] = "{\"device\":\"%s\",\"sequence\":%d,\"poll\":%d,\"channels\":[\"temperature\",\"humidity\"],\"channel_0\":[";
+        int len = snprintf(m_ptr,m_len_remain,fmt_head,DEVICE_NAME,samples.seq_number,POLL_INTERVALL);
         const char fmt_v[] = "%.1f,";
         for (int i=0;i<BACKLOG_SIZE;i++) {
             m_ptr += len;
@@ -127,7 +130,7 @@ void app_main() {
         }
         m_ptr += len-1;
         m_len_remain -= len-1;
-        const char fmt_m[] = "], \"channel_1\":[";
+        const char fmt_m[] = "],\"channel_1\":[";
         len = snprintf(m_ptr,m_len_remain,fmt_m);
         for (int i=0;i<BACKLOG_SIZE;i++) {
             m_ptr += len;
@@ -136,7 +139,19 @@ void app_main() {
         }
         m_ptr += len-1;
         m_len_remain -= len-1;
-        const char fmt_tail[] = "] }";
+        const char fmt_m2[] = "],\"p_delta_ms\":[";
+        len = snprintf(m_ptr,m_len_remain,fmt_m2);
+        for (int i=0;i<BACKLOG_SIZE-1;i++) {
+            m_ptr += len;
+            m_len_remain -= len;
+            double diff = -1;
+            if ((samples.t[i]>0) && (samples.t[i+1]>0))
+                diff = samples.t[i] - samples.t[i+1] - ((double) POLL_INTERVALL) * 1000.0;
+            len = snprintf(m_ptr,m_len_remain,fmt_v,diff);
+        }
+        m_ptr += len-1;
+        m_len_remain -= len-1;
+        const char fmt_tail[] = "]}";
         len = snprintf(m_ptr,m_len_remain,fmt_tail);
         m_ptr += len;
         m_len_remain -= len;
@@ -170,8 +185,12 @@ void app_main() {
 		// The interval of whole process must be beyond 2 seconds !! 
 		// vTaskDelay( POLL_INTERVALL * 1000 / portTICK_RATE_MS );
 
-        uint64_t deep_sleep = (POLL_INTERVALL-1) * 1000000;
-        esp_sleep_enable_timer_wakeup(deep_sleep);
+        if (samples.t[1] > 0) {
+            double diff = samples.t[0] - samples.t[1] - ((double) POLL_INTERVALL) * 1000.0;
+            deep_sleep_period_ms -= diff;
+            printf("Difference in last period was %.3f ms, new sleep intervall is %.3f\n",diff,deep_sleep_period_ms);
+        }
+        esp_sleep_enable_timer_wakeup(((uint64_t) deep_sleep_period_ms) * 1000.0);
         esp_deep_sleep_start();
 	}
 
