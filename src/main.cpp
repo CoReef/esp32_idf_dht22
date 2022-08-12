@@ -15,7 +15,7 @@
 */
 
 #define DEVICE_NAME "Nemo-01"
-#define POLL_INTERVALL 60    // seconds
+#define POLL_INTERVALL 300    // seconds
 #define BACKLOG_SIZE 12
 #define MAX_MESSAGE_SIZE 1024
 
@@ -187,7 +187,10 @@ void app_main() {
 
         if (samples.t[1] > 0) {
             double diff = samples.t[0] - samples.t[1] - ((double) POLL_INTERVALL) * 1000.0;
-            deep_sleep_period_ms -= diff;
+            double k = 3.0;
+            double mk = 10.0;
+            double new_deep = (k * (deep_sleep_period_ms-diff) + (mk-k) * deep_sleep_period_ms)/mk;
+            deep_sleep_period_ms = new_deep;
             printf("Difference in last period was %.3f ms, new sleep intervall is %.3f\n",diff,deep_sleep_period_ms);
         }
         esp_sleep_enable_timer_wakeup(((uint64_t) deep_sleep_period_ms) * 1000.0);
