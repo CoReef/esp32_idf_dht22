@@ -61,12 +61,19 @@ double get_time_in_millis () {
     return ((double) tv_now.tv_sec) * 1000.0 + ((double) tv_now.tv_usec) / 1000.0;
 }
 
+void delay_in_millis ( unsigned int d) {
+    vTaskDelay( d / portTICK_RATE_MS );
+}
+
+double weighted_average ( double v1, double v2, double w ) {
+    return w*v1+(1.0-w)*v2;
+} 
+
 // ********************************************************************************
 // Main
 // ********************************************************************************
 
 void app_main() {
-    printf("This is %s ...\n",DEVICE_NAME);
     //Initialize NVS
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -93,12 +100,14 @@ void app_main() {
         return;
     }
 
-	vTaskDelay( 1000 / portTICK_RATE_MS );
+	delay_in_millis(1000);
 	setDHTgpio(27);
 
     JSONBuilder jb(MAX_MESSAGE_SIZE);
 
     while(1) {
+        uint32_t free_heap = esp_get_free_heap_size();
+        printf("Free heap size is %d bytes\n",free_heap);
         int ret = readDHT();		
 		errorHandler(ret);
         float readings[2];
@@ -117,15 +126,12 @@ void app_main() {
         
         wifi.Await_Connection();
         ms.send(jb.str(),jb.strlen());
-        vTaskDelay( 1000 / portTICK_RATE_MS );
+        delay_in_millis(1000);
         ms.send(jb.str(),jb.strlen());
 
         if (samples.number_of_readings() > 1) {
             double diff = samples.timestamp(0) - samples.timestamp(1) - ((double) POLL_INTERVALL) * 1000.0;
-            double k = 3.0;
-            double mk = 10.0;
-            double new_deep = (k * (deep_sleep_period_ms-diff) + (mk-k) * deep_sleep_period_ms)/mk;
-            deep_sleep_period_ms = new_deep;
+            deep_sleep_period_ms = weighted_average(deep_sleep_period_ms-diff,deep_sleep_period_ms,0.3);
             printf("Difference in last period was %.3f ms, new sleep intervall is %.3f\n",diff,deep_sleep_period_ms);
         }
 
@@ -133,7 +139,7 @@ void app_main() {
             continue;
 
         if (POLL_INTERVALL < 30) {
-            vTaskDelay( deep_sleep_period_ms / portTICK_RATE_MS );
+            delay_in_millis(deep_sleep_period_ms);
         }
         else {
             esp_sleep_enable_timer_wakeup(((uint64_t) deep_sleep_period_ms) * 1000.0);

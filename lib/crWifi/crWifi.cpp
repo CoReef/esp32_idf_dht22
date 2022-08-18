@@ -114,6 +114,7 @@ namespace CoReef {
         bool connected = false;
         while (!connected) {
             Wifi::state_e wifi_state = GetState();
+            // printf("Await_Connection() is in state %s\n",GetStateDescription(wifi_state));
             switch (wifi_state) {
                 case Wifi::state_e::READY_TO_CONNECT:
                 case Wifi::state_e::DISCONNECTED:
