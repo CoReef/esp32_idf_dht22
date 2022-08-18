@@ -6,7 +6,7 @@ class MulticastSocket {
         MulticastSocket (char *multicast_addr, int multicast_port);
         ~MulticastSocket ();
 
-        bool send (char *message, int message_len );
+        bool send (const char *message, int message_len );
 
         bool valid ();
     protected:

@@ -15,7 +15,8 @@
 */
 
 #define DEVICE_NAME "Nemo-01"
-#define POLL_INTERVALL 300    // seconds
+#define POLL_INTERVALL 20    // seconds
+#define N_CHANNELS 2
 #define BACKLOG_SIZE 12
 #define MAX_MESSAGE_SIZE 1024
 
@@ -33,6 +34,9 @@ static const char *TAG = "esp32_dht22";
 
 #include "crWifi.h"
 #include "crUDP.h"
+#include "crSensorReadings.h"
+#include "crSensorReadings.cpp"
+#include "crJSONBuilder.h"
 
 using namespace CoReef;
 
@@ -43,23 +47,13 @@ extern "C" {
     void app_main(void);
     #include "DHT22.h"
 }
-struct Samples {
-    unsigned int seq_number;
-    float backlog_t[BACKLOG_SIZE];
-    float backlog_h[BACKLOG_SIZE];
-    double t[BACKLOG_SIZE];
-};
 
-RTC_NOINIT_ATTR Samples samples;
+RTC_NOINIT_ATTR SensorReadings<N_CHANNELS,BACKLOG_SIZE> samples;
 RTC_NOINIT_ATTR double deep_sleep_period_ms = ((double) POLL_INTERVALL) * 1000.0;
 
 // ********************************************************************************
-// Main
+// Utility functions
 // ********************************************************************************
-
-void DHT_task(void *pvParameter)
-{
-}
 
 double get_time_in_millis () {
     struct timeval tv_now;
@@ -67,7 +61,12 @@ double get_time_in_millis () {
     return ((double) tv_now.tv_sec) * 1000.0 + ((double) tv_now.tv_usec) / 1000.0;
 }
 
+// ********************************************************************************
+// Main
+// ********************************************************************************
+
 void app_main() {
+    printf("This is %s ...\n",DEVICE_NAME);
     //Initialize NVS
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -77,12 +76,7 @@ void app_main() {
     ESP_ERROR_CHECK(ret);
 
     if (rtc_get_reset_reason(0) != DEEPSLEEP_RESET) {
-        for (int i=0; i<BACKLOG_SIZE; i++) {
-            samples.backlog_t[i] = -100.0;
-            samples.backlog_h[i] = -100.0;
-            samples.t[i] = -1.0;
-        }
-        samples.seq_number = 0;
+        samples.init();
         deep_sleep_period_ms = ((double) POLL_INTERVALL) * 1000.0;
     }
     ESP_LOGI(TAG, "data structure samples has <%d> bytes",sizeof(samples));
@@ -102,101 +96,49 @@ void app_main() {
 	vTaskDelay( 1000 / portTICK_RATE_MS );
 	setDHTgpio(27);
 
-    char message[MAX_MESSAGE_SIZE];
+    JSONBuilder jb(MAX_MESSAGE_SIZE);
+
     while(1) {
-        for (int i=BACKLOG_SIZE-1;i>0; i--) {
-            samples.backlog_t[i] = samples.backlog_t[i-1];
-            samples.backlog_h[i] = samples.backlog_h[i-1];
-            samples.t[i] = samples.t[i-1];
-        }
-		int ret = readDHT();		
+        int ret = readDHT();		
 		errorHandler(ret);
-        samples.backlog_t[0] = getTemperature();
-        samples.backlog_h[0] = getHumidity();
-        samples.t[0] = get_time_in_millis();
+        float readings[2];
+        readings[0] = getTemperature();
+        readings[1] = getHumidity();
+        samples.add_reading(readings,get_time_in_millis());
 
-        samples.seq_number++;
-
-        char *m_ptr = message;
-        int m_len_remain = MAX_MESSAGE_SIZE;
+        jb.reset();
+        jb.add("{")
+            .add("device",DEVICE_NAME)
+            .add("poll",POLL_INTERVALL)
+            .add("\"channels\":[\"Temperature\",\"Humidity\"],");
+        samples.create_json(jb,POLL_INTERVALL);
+        jb.add("}");
+        printf("<%s>\n",jb.str());
         
-        const char fmt_head[] = "{\"device\":\"%s\",\"sequence\":%d,\"poll\":%d,\"channels\":[\"temperature\",\"humidity\"],\"channel_0\":[";
-        int len = snprintf(m_ptr,m_len_remain,fmt_head,DEVICE_NAME,samples.seq_number,POLL_INTERVALL);
-        const char fmt_v[] = "%.1f,";
-        for (int i=0;i<BACKLOG_SIZE;i++) {
-            m_ptr += len;
-            m_len_remain -= len;
-            len = snprintf(m_ptr,m_len_remain,fmt_v,samples.backlog_t[i]);
-        }
-        m_ptr += len-1;
-        m_len_remain -= len-1;
-        const char fmt_m[] = "],\"channel_1\":[";
-        len = snprintf(m_ptr,m_len_remain,fmt_m);
-        for (int i=0;i<BACKLOG_SIZE;i++) {
-            m_ptr += len;
-            m_len_remain -= len;
-            len = snprintf(m_ptr,m_len_remain,fmt_v,samples.backlog_h[i]);
-        }
-        m_ptr += len-1;
-        m_len_remain -= len-1;
-        const char fmt_m2[] = "],\"p_delta_ms\":[";
-        len = snprintf(m_ptr,m_len_remain,fmt_m2);
-        for (int i=0;i<BACKLOG_SIZE-1;i++) {
-            m_ptr += len;
-            m_len_remain -= len;
-            double diff = -1;
-            if ((samples.t[i]>0) && (samples.t[i+1]>0))
-                diff = samples.t[i] - samples.t[i+1] - ((double) POLL_INTERVALL) * 1000.0;
-            len = snprintf(m_ptr,m_len_remain,fmt_v,diff);
-        }
-        m_ptr += len-1;
-        m_len_remain -= len-1;
-        const char fmt_tail[] = "]}";
-        len = snprintf(m_ptr,m_len_remain,fmt_tail);
-        m_ptr += len;
-        m_len_remain -= len;
-
-
-        bool connected = false;
-        while (!connected) {
-            Wifi::state_e wifi_state = wifi.GetState();
-            switch (wifi_state) {
-                case Wifi::state_e::READY_TO_CONNECT:
-                case Wifi::state_e::DISCONNECTED:
-                    wifi.Begin();
-                    break;
-                case Wifi::state_e::CONNECTED:
-                    connected = true;
-                    break;
-                case Wifi::state_e::WAITING_FOR_IP:
-                case Wifi::state_e::CONNECTING:
-                    vTaskDelay( 100 / portTICK_RATE_MS );
-                    break;
-                default:
-                    ESP_LOGI(TAG,"Wifi state is %s - not yet dealing with it",Wifi::GetStateDescription(wifi_state));
-            }
-        }
-        printf("%s\n",message);
-        ms.send(message,MAX_MESSAGE_SIZE-m_len_remain);
+        wifi.Await_Connection();
+        ms.send(jb.str(),jb.strlen());
         vTaskDelay( 1000 / portTICK_RATE_MS );
-        ms.send(message,MAX_MESSAGE_SIZE-m_len_remain);
+        ms.send(jb.str(),jb.strlen());
 
-		// -- wait at least 2 sec before reading again ------------
-		// The interval of whole process must be beyond 2 seconds !! 
-		// vTaskDelay( POLL_INTERVALL * 1000 / portTICK_RATE_MS );
-
-        if (samples.t[1] > 0) {
-            double diff = samples.t[0] - samples.t[1] - ((double) POLL_INTERVALL) * 1000.0;
+        if (samples.number_of_readings() > 1) {
+            double diff = samples.timestamp(0) - samples.timestamp(1) - ((double) POLL_INTERVALL) * 1000.0;
             double k = 3.0;
             double mk = 10.0;
             double new_deep = (k * (deep_sleep_period_ms-diff) + (mk-k) * deep_sleep_period_ms)/mk;
             deep_sleep_period_ms = new_deep;
             printf("Difference in last period was %.3f ms, new sleep intervall is %.3f\n",diff,deep_sleep_period_ms);
         }
-        esp_sleep_enable_timer_wakeup(((uint64_t) deep_sleep_period_ms) * 1000.0);
-        esp_deep_sleep_start();
-	}
 
-	// xTaskCreate( &DHT_task, "DHT_task", 2048, NULL, 5, NULL );
+        if (deep_sleep_period_ms < 1.0)
+            continue;
+
+        if (POLL_INTERVALL < 30) {
+            vTaskDelay( deep_sleep_period_ms / portTICK_RATE_MS );
+        }
+        else {
+            esp_sleep_enable_timer_wakeup(((uint64_t) deep_sleep_period_ms) * 1000.0);
+            esp_deep_sleep_start();
+        }
+	}
 }
 

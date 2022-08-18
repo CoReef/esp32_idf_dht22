@@ -110,6 +110,29 @@ namespace CoReef {
         return status;
     }
 
+    void Wifi::Await_Connection () {
+        bool connected = false;
+        while (!connected) {
+            Wifi::state_e wifi_state = GetState();
+            switch (wifi_state) {
+                case Wifi::state_e::READY_TO_CONNECT:
+                case Wifi::state_e::DISCONNECTED:
+                    Begin();
+                    break;
+                case Wifi::state_e::CONNECTED:
+                    connected = true;
+                    break;
+                case Wifi::state_e::WAITING_FOR_IP:
+                case Wifi::state_e::CONNECTING:
+                    vTaskDelay( 100 / portTICK_RATE_MS );
+                    break;
+                default:
+                    // ESP_LOGI(TAG,"Wifi state is %s - not yet dealing with it",GetStateDescription(wifi_state));
+                    break;
+            }
+        }
+    }
+
     esp_err_t Wifi::_init() {
         std::lock_guard<std::mutex> mutx_guard(_mutx);
         esp_err_t status{ESP_OK};

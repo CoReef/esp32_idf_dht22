@@ -44,6 +44,7 @@ namespace CoReef {
             void SetCredentials(const char *ssid, const char *password);
             esp_err_t Init();
             esp_err_t Begin(void);
+            void Await_Connection();
 
             constexpr static const state_e &GetState(void) { return _state; }
             constexpr static const char *GetMac(void) { return _mac_addr_cstr; }

@@ -150,7 +150,7 @@ bool MulticastSocket::create_multicast_ipv4_destination_address (char *multicast
     return true;
 }
 
-bool MulticastSocket::send (char *message, int message_len ) {
+bool MulticastSocket::send (const char *message, int message_len ) {
     if (!valid()) {
         ESP_LOGE(MTAG, "Multicast socket not initialized correctly; unable to send");
         return false;
