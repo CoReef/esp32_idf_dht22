@@ -15,7 +15,7 @@
 */
 
 #define DEVICE_NAME "Nemo-01"
-#define POLL_INTERVALL 20    // seconds
+#define POLL_INTERVALL 60    // seconds
 #define N_CHANNELS 2
 #define BACKLOG_SIZE 12
 #define MAX_MESSAGE_SIZE 1024
@@ -119,6 +119,7 @@ void app_main() {
         jb.add("{")
             .add("device",DEVICE_NAME)
             .add("poll",POLL_INTERVALL)
+            .add("free_heap",free_heap)
             .add("\"channels\":[\"Temperature\",\"Humidity\"],");
         samples.create_json(jb,POLL_INTERVALL);
         jb.add("}");
@@ -138,7 +139,7 @@ void app_main() {
         if (deep_sleep_period_ms < 1.0)
             continue;
 
-        if (POLL_INTERVALL < 30) {
+        if (POLL_INTERVALL <= 60) {
             delay_in_millis(deep_sleep_period_ms);
         }
         else {
