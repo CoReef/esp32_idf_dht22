@@ -19,6 +19,7 @@
 #define N_CHANNELS 2
 #define BACKLOG_SIZE 12
 #define MAX_MESSAGE_SIZE 1024
+#define GPIO_DHT22 27
 
 #define LOG_LOCAL_LEVEL ESP_LOG_WARN
 #include "esp_log.h"
@@ -34,6 +35,7 @@ static const char *TAG = "esp32_dht22";
 
 #include "crWifi.h"
 #include "crUDP.h"
+#include "crDHT22.h"
 #include "crSensorReadings.h"
 #include "crSensorReadings.cpp"
 #include "crJSONBuilder.h"
@@ -45,7 +47,6 @@ using namespace CoReef;
 
 extern "C" {
     void app_main(void);
-    #include "DHT22.h"
 }
 
 RTC_NOINIT_ATTR SensorReadings<N_CHANNELS,BACKLOG_SIZE> samples;
@@ -101,18 +102,16 @@ void app_main() {
     }
 
 	delay_in_millis(1000);
-	setDHTgpio(27);
+	DHT22 dht22((gpio_num_t) GPIO_DHT22);
 
     JSONBuilder jb(MAX_MESSAGE_SIZE);
 
     while(1) {
         uint32_t free_heap = esp_get_free_heap_size();
         printf("Free heap size is %d bytes\n",free_heap);
-        int ret = readDHT();		
-		errorHandler(ret);
         float readings[2];
-        readings[0] = getTemperature();
-        readings[1] = getHumidity();
+        readings[0] = dht22.get_temperature();
+        readings[1] = dht22.get_humidity();
         samples.add_reading(readings,get_time_in_millis());
 
         jb.reset();
