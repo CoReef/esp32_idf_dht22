@@ -115,13 +115,24 @@ double DHT22::get_time_in_millis () {
     return ((double) tv_now.tv_sec) * 1000.0 + ((double) tv_now.tv_usec) / 1000.0;
 }
 
+void DHT22::delay_in_millis ( unsigned int d) {
+    vTaskDelay( d / portTICK_RATE_MS );
+}
+
 void DHT22::next_reading () {
     if (get_time_in_millis()-last_reading <= 2000.0)
         return;
     float save_t = temperature;
     float save_h = humidity;
     int ret = readDHT22();
+	int loop_count = 0; // Be more resilient and accept 3 re-reads
+	while ((ret != DHT_OK) && (loop_count < 3)) {
+		delay_in_millis(2000);
+		ret = readDHT22();
+		loop_count++;
+	}
     if (ret != DHT_OK) {
+		// Still no reading so make it visible to the outside by negating the values
         temperature = -save_t;
         humidity = -save_h;
         return;

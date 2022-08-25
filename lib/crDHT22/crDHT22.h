@@ -15,6 +15,7 @@ namespace CoReef {
             int getSignalLevel ( int usTimeOut, bool state );
             int readDHT22 ();
             double get_time_in_millis ();
+            void delay_in_millis ( unsigned int d);
             void next_reading();
 
             gpio_num_t dht22_pin;
